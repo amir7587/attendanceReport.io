@@ -269,6 +269,349 @@ try {
   if (l) checkInLog = JSON.parse(l);
 } catch(e) {}
 
-/* =========================================================a
+/* ============================================================
+   HELPERS
+============================================================ */
+function dateKey(d) {
+  return yr+'-'+String(mo+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+}
+function getAttKey(name, d) { return name+'|'+dateKey(d); }
+function isWeekend(d) { return [0,6].includes(new Date(yr,mo,d).getDay()); }
+function isFuture(d)  { return new Date(yr,mo,d) > today; }
+function isToday(d)   { return new Date(yr,mo,d).getTime() === today.getTime(); }
 
+function getWorkDays(upToToday) {
+  const days = [];
+  for(let d=1; d<=daysInMonth; d++) {
+    if(!isWeekend(d) && (!upToToday || !isFuture(d))) days.push(d);
+  }
+  return days;
+}
+
+function saveState() {
+  try {
+    localStorage.setItem('att_data', JSON.stringify(attendance));
+    localStorage.setItem('att_log',  JSON.stringify(checkInLog));
+  } catch(e) {}
+}
+
+/* ============================================================
+   BUILD ATTENDANCE GRID
+============================================================ */
+function buildTable() {
+  const tbl = document.getElementById('attTable');
+
+  let head = '<thead><tr><th class="name-col">Name</th>';
+  for(let d=1; d<=daysInMonth; d++) {
+    const wd = DAYS_SHORT[new Date(yr,mo,d).getDay()];
+    const wknd = isWeekend(d);
+    head += `<th${wknd?' style="opacity:.4"':''}>
+      ${d}<span class="date-sub">${wd}</span></th>`;
+  }
+  head += '</tr></thead>';
+
+  let body = '<tbody>';
+  NAMES.forEach(name => {
+    body += `<tr><td class="name-col">${name}</td>`;
+    for(let d=1; d<=daysInMonth; d++) {
+      const key   = getAttKey(name,d);
+      const checked = !!attendance[key];
+      const fut   = isFuture(d), tod = isToday(d), wknd = isWeekend(d);
+      let cls = 'cb';
+      if(checked) cls += ' checked';
+      if(tod)     cls += ' today';
+      if(fut)     cls += ' future';
+      const tdStyle = wknd ? ' style="background:#f0f0f0;opacity:.5"' : '';
+      const onclick = (!fut && !wknd)
+        ? `onclick="toggle('${name.replace(/'/g,"\\'")}',${d},this)"` : '';
+      body += `<td${tdStyle}><div class="${cls}" data-key="${key}" ${onclick}></div></td>`;
+    }
+    body += '</tr>';
+  });
+  body += '</tbody>';
+  tbl.innerHTML = head + body;
+}
+
+/* ============================================================
+   TOGGLE — check-in logic (one-way, locked after tick)
+============================================================ */
+function toggle(name, d, el) {
+  const key = getAttKey(name,d);
+  if(attendance[key]) return;
+  attendance[key] = true;
+  el.classList.add('checked');
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  checkInLog.unshift({name, date:dateKey(d), time:timeStr});
+  saveState();
+  updateAll();
+}
+
+/* ============================================================
+   DEFAULTER LOGIC
+============================================================ */
+function computeDefaulters() {
+  const workDays = getWorkDays(true);
+  const missed = {};
+  NAMES.forEach(name => {
+    let m = 0;
+    workDays.forEach(d => { if(!attendance[getAttKey(name,d)]) m++; });
+    if(m > 0) missed[name] = m;
+  });
+  return Object.entries(missed).sort((a,b) => b[1]-a[1]);
+}
+
+/* ============================================================
+   METRIC CARDS
+============================================================ */
+function updateMetrics() {
+  document.getElementById('m-total').textContent = NAMES.length;
+  let todayCnt = 0;
+  NAMES.forEach(n => { if(attendance[getAttKey(n, today.getDate())]) todayCnt++; });
+  document.getElementById('m-today').textContent = todayCnt;
+  document.getElementById('m-month').textContent = Object.values(attendance).filter(Boolean).length;
+  document.getElementById('m-def').textContent   = computeDefaulters().length;
+}
+
+/* ============================================================
+   BAR CHART
+============================================================ */
+let chartInst = null;
+function updateChart() {
+  const labels = [], data = [];
+  for(let d=1; d<=daysInMonth; d++) {
+    if(isWeekend(d) || isFuture(d)) continue;
+    labels.push(String(d));
+    let cnt = 0;
+    NAMES.forEach(n => { if(attendance[getAttKey(n,d)]) cnt++; });
+    data.push(cnt);
+  }
+  if(chartInst) chartInst.destroy();
+  chartInst = new Chart(document.getElementById('barChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets:[{
+        label: 'Check-ins',
+        data,
+        backgroundColor: labels.map(l => isToday(+l) ? '#1D9E75' : '#B5D4F4'),
+        borderColor:     labels.map(l => isToday(+l) ? '#0F6E56' : '#378ADD'),
+        borderWidth: 1, borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid:{display:false}, ticks:{font:{size:11}, autoSkip:false, maxRotation:0} },
+        y: { beginAtZero:true, max:NAMES.length, ticks:{stepSize:5}, grid:{color:'rgba(0,0,0,.06)'} }
+      }
+    }
+  });
+}
+
+/* ============================================================
+   DEFAULTER LIST + AUDIT LOG
+============================================================ */
+function updateDefaulterList() {
+  const defs = computeDefaulters();
+  const el   = document.getElementById('defList');
+  el.innerHTML = defs.length
+    ? defs.map(([name,missed]) =>
+        `<div class="def-row">
+          <span class="def-name">${name}</span>
+          <span class="def-badge">${missed} missed</span>
+        </div>`).join('')
+    : '<div style="font-size:13px;color:#999">No defaulters yet.</div>';
+
+  const ts = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  const defLogEl = document.getElementById('defLog');
+  defLogEl.innerHTML = defs.length
+    ? defs.map(([name,missed]) =>
+        `<div class="log-entry">[${ts}] DEFAULTER | ${name} | ${missed} working day(s) not checked in</div>`
+      ).join('')
+    : '<div style="font-size:13px;color:#999">No defaulters flagged.</div>';
+}
+
+/* ============================================================
+   CHECK-IN LOG
+============================================================ */
+function updateLog() {
+  const el = document.getElementById('logEntries');
+  el.innerHTML = checkInLog.length
+    ? checkInLog.slice(0,100).map(e =>
+        `<div class="log-entry">CHECK-IN | Name: ${e.name} | Date: ${e.date} | Time: ${e.time}</div>`
+      ).join('')
+    : '<div style="font-size:13px;color:#999">No check-ins logged yet.</div>';
+}
+
+/* ============================================================
+   WEEKLY SUMMARY VIEW
+============================================================ */
+function buildWeeklySummary() {
+  const container = document.getElementById('weekGrid');
+  const allWorkDays = getWorkDays(false);
+
+  // Group working days into ISO weeks
+  const weeks = [];
+  let currentWeek = null;
+  allWorkDays.forEach(d => {
+    const dt = new Date(yr,mo,d);
+    const weekNum = getWeekNumber(dt);
+    if(!currentWeek || currentWeek.weekNum !== weekNum) {
+      currentWeek = { weekNum, days:[], label:'' };
+      weeks.push(currentWeek);
+    }
+    currentWeek.days.push(d);
+  });
+
+  // Label weeks
+  weeks.forEach((w,i) => {
+    const first = w.days[0], last = w.days[w.days.length-1];
+    w.label = `Week ${i+1} — ${MONTHS[mo].slice(0,3)} ${first} to ${last}`;
+  });
+
+  container.innerHTML = '';
+
+  weeks.forEach(w => {
+    const pastDays = w.days.filter(d => !isFuture(d));
+    const totalSlots = pastDays.length * NAMES.length;
+    let totalChecked = 0;
+
+    // Per-person stats for this week
+    const personStats = NAMES.map(name => {
+      const present = pastDays.filter(d => attendance[getAttKey(name,d)]).length;
+      const absent  = pastDays.length - present;
+      totalChecked += present;
+      return { name, present, absent, total: pastDays.length };
+    }).sort((a,b) => a.present - b.present); // worst first
+
+    const rate = totalSlots > 0 ? Math.round(totalChecked / totalSlots * 100) : 0;
+
+    const block = document.createElement('div');
+    block.className = 'week-block';
+
+    const futureMark = pastDays.length < w.days.length
+      ? ` <span style="font-size:11px;color:#888;font-weight:400">(${w.days.length - pastDays.length} day(s) remaining)</span>` : '';
+
+    block.innerHTML = `
+      <div class="week-header">
+        <span>${w.label}${futureMark}</span>
+        <span class="week-rate">${rate}% attendance</span>
+      </div>
+      <table class="week-tbl">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Present</th>
+            <th>Absent</th>
+            <th>Rate</th>
+            <th>Visual</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${personStats.map(p => {
+            const pct = p.total > 0 ? Math.round(p.present/p.total*100) : 0;
+            const barCls = pct >= 80 ? '' : pct >= 50 ? ' mid' : ' low';
+            return `<tr>
+              <td>${p.name}</td>
+              <td>${p.present} / ${p.total}</td>
+              <td>${p.absent}</td>
+              <td>${pct}%</td>
+              <td><span class="bar-bg"><span class="bar-fill${barCls}" style="width:${pct}%"></span></span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+    container.appendChild(block);
+  });
+}
+
+function getWeekNumber(dt) {
+  const d = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+  return Math.ceil((((d-yearStart)/86400000)+1)/7);
+}
+
+/* ============================================================
+   EXPORT CSV
+============================================================ */
+function exportCSV() {
+  const workDays = getWorkDays(false);
+  const rows = [];
+
+  // Header
+  rows.push(['Name', ...workDays.map(d => dateKey(d)), 'Total Present', 'Total Absent', 'Attendance %']);
+
+  // Per-person rows
+  NAMES.forEach(name => {
+    const cells = workDays.map(d => attendance[getAttKey(name,d)] ? '1' : '0');
+    const present = cells.filter(c=>c==='1').length;
+    const pastWork = workDays.filter(d=>!isFuture(d)).length;
+    const pct = pastWork > 0 ? Math.round(present/pastWork*100)+'%' : 'N/A';
+    rows.push([name, ...cells, present, pastWork-present, pct]);
+  });
+
+  // Daily totals row
+  const totals = workDays.map(d => {
+    if(isFuture(d)) return '-';
+    let cnt=0; NAMES.forEach(n=>{ if(attendance[getAttKey(n,d)]) cnt++; }); return cnt;
+  });
+  rows.push(['DAILY TOTAL', ...totals, '', '', '']);
+
+  // Separator
+  rows.push([]);
+  rows.push(['--- CHECK-IN LOG ---']);
+  rows.push(['Name','Date','Time']);
+  checkInLog.forEach(e => rows.push([e.name, e.date, e.time]));
+
+  // Defaulters
+  rows.push([]);
+  rows.push(['--- DEFAULTER LIST ---']);
+  rows.push(['Name','Days Missed']);
+  computeDefaulters().forEach(([name,missed]) => rows.push([name, missed]));
+
+  const csv = rows.map(r =>
+    r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')
+  ).join('\n');
+
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `attendance_${MONTHS[mo]}_${yr}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ============================================================
+   TAB SWITCHING
+============================================================ */
+function switchTab(tab, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('frontend-section').style.display = tab==='frontend' ? 'block' : 'none';
+  document.getElementById('backend-section').style.display  = tab==='backend'  ? 'block' : 'none';
+  document.getElementById('weekly-section').style.display   = tab==='weekly'   ? 'block' : 'none';
+  if(tab==='weekly') buildWeeklySummary();
+}
+
+/* ============================================================
+   MASTER UPDATE
+============================================================ */
+function updateAll() {
+  updateMetrics();
+  updateChart();
+  updateDefaulterList();
+  updateLog();
+}
+
+/* ============================================================
+   INIT
+============================================================ */
+buildTable();
+updateAll();
 </script>
+</body>
+</html>
