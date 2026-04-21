@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Attendance Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f4f6f9; color: #1a1a1a; }
+
+    .dash { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1.5rem; flex-wrap: wrap; gap: 12px;
+    }
+    .topbar h1 { font-size: 20px; font-weight: 600; }
+
+    .tabs { display: flex; gap: 8px; }
+    .tab {
+      padding: 7px 18px; border: 1px solid #ccc; border-radius: 8px;
+      font-size: 13px; cursor: pointer; background: #fff; color: #555;
+    }
+    .tab.active { background: #1a1a1a; color: #fff; border-color: transparent; }
+
+    .export-btn {
+      padding: 7px 16px; border: 1px solid #bbb; border-radius: 8px;
+      font-size: 13px; cursor: pointer; background: #fff; color: #1a1a1a;
+      font-weight: 500; transition: background 0.15s;
+    }
+    .export-btn:hover { background: #f0f0f0; }
+
+    /* ── METRIC CARDS ── */
+    .metrics {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 12px; margin-bottom: 1.5rem;
+    }
+    .metric { background: #e8edf3; border-radius: 8px; padding: 0.85rem 1rem; }
+    .metric .label { font-size: 12px; color: #666; margin-bottom: 4px; }
+    .metric .val { font-size: 24px; font-weight: 600; color: #1a1a1a; }
+
+    /* ── PANELS ── */
+    .panels { display: grid; grid-template-columns: 1fr 320px; gap: 16px; margin-bottom: 1.5rem; }
+    .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 12px; padding: 1rem 1.25rem; }
+    .card h2 {
+      font-size: 12px; font-weight: 600; color: #666;
+      margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .chart-wrap { position: relative; width: 100%; height: 220px; }
+
+    /* ── DEFAULTER LIST ── */
+    .def-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+    .def-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; border-radius: 8px; background: #f4f6f9;
+    }
+    .def-name { font-size: 13px; color: #1a1a1a; }
+    .def-badge {
+      font-size: 11px; font-weight: 600; padding: 2px 8px;
+      border-radius: 6px; background: #FCEBEB; color: #A32D2D;
+    }
+
+    /* ── ATTENDANCE TABLE ── */
+    .grid-section { overflow-x: auto; }
+    table.att { border-collapse: collapse; font-size: 12px; width: 100%; }
+    table.att th {
+      background: #f4f6f9; color: #666; padding: 7px 8px;
+      white-space: nowrap; text-align: center;
+      border-bottom: 1px solid #e0e0e0; position: sticky; top: 0; z-index: 1;
+    }
+    table.att th.name-col { text-align: left; position: sticky; left: 0; z-index: 2; background: #f4f6f9; }
+    table.att td { padding: 5px 6px; text-align: center; border-bottom: 1px solid #f0f0f0; }
+    table.att td.name-col {
+      text-align: left; position: sticky; left: 0;
+      background: #fff; z-index: 1; font-size: 13px;
+      white-space: nowrap; padding: 4px 14px 4px 8px; color: #1a1a1a;
+    }
+    table.att tr:hover td { background: #f9fafb; }
+    table.att tr:hover td.name-col { background: #f9fafb; }
+
+    /* ── CHECKBOXES ── */
+    .cb {
+      width: 20px; height: 20px;
+      border: 2px solid #888;
+      border-radius: 4px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+      flex-shrink: 0; background: #fff;
+    }
+    .cb:hover:not(.future) { border-color: #1D9E75; background: #e8f7f2; }
+    .cb.checked { background: #1D9E75; border-color: #1D9E75; }
+    .cb.checked::after {
+      content: ''; display: block; width: 5px; height: 9px;
+      border: 2px solid #fff; border-top: none; border-left: none;
+      transform: rotate(45deg) translate(-1px, -1px);
+    }
+    .cb.today { border-color: #378ADD; box-shadow: 0 0 0 2px #b5d4f4; }
+    .cb.future { opacity: 0.3; cursor: default; pointer-events: none; background: #f5f5f5; }
+
+    .date-sub { font-size: 10px; color: #999; display: block; }
+
+    /* ── LOGS ── */
+    .log-entries {
+      max-height: 200px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .log-entry {
+      font-size: 12px; color: #444; padding: 5px 10px;
+      background: #f4f6f9; border-radius: 4px; font-family: monospace;
+    }
+
+    /* ── WEEKLY SUMMARY ── */
+    .week-grid { display: flex; flex-direction: column; gap: 12px; }
+    .week-block { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }
+    .week-header {
+      background: #f4f6f9; padding: 8px 12px;
+      font-size: 12px; font-weight: 600; color: #555;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .week-rate { font-size: 11px; color: #1D9E75; font-weight: 600; }
+    table.week-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.week-tbl th {
+      background: #fafafa; color: #888; padding: 5px 10px;
+      text-align: left; border-bottom: 1px solid #f0f0f0; font-weight: 500;
+    }
+    table.week-tbl td { padding: 5px 10px; border-bottom: 1px solid #f9f9f9; color: #1a1a1a; }
+    table.week-tbl tr:last-child td { border-bottom: none; }
+    .bar-bg { background: #e8edf3; border-radius: 4px; height: 8px; width: 100px; display: inline-block; vertical-align: middle; }
+    .bar-fill { background: #1D9E75; border-radius: 4px; height: 8px; display: block; transition: width 0.3s; }
+    .bar-fill.low { background: #E24B4A; }
+    .bar-fill.mid { background: #EF9F27; }
+
+    @media (max-width: 768px) {
+      .panels { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+<div class="dash">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <h1>Attendance Dashboard</h1>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span id="cur-month" style="font-size:14px;color:#666"></span>
+      <button class="export-btn" onclick="exportCSV()">&#8595; Export CSV</button>
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('frontend',this)">Front end</button>
+        <button class="tab" onclick="switchTab('backend',this)">Back end</button>
+        <button class="tab" onclick="switchTab('weekly',this)">Weekly summary</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- METRIC CARDS -->
+  <div class="metrics">
+    <div class="metric">
+      <div class="label">Total members</div>
+      <div class="val" id="m-total">0</div>
+    </div>
+    <div class="metric">
+      <div class="label">Present today</div>
+      <div class="val" id="m-today">0</div>
+    </div>
+    <div class="metric">
+      <div class="label">Check-ins this month</div>
+      <div class="val" id="m-month">0</div>
+    </div>
+    <div class="metric">
+      <div class="label">Defaulters</div>
+      <div class="val" id="m-def" style="color:#A32D2D">0</div>
+    </div>
+  </div>
+
+  <!-- BAR CHART + DEFAULTER PANEL -->
+  <div class="panels">
+    <div class="card">
+      <h2>Daily attendance — check-ins per day</h2>
+      <div class="chart-wrap">
+        <canvas id="barChart" role="img" aria-label="Bar chart showing daily check-ins this month">Daily attendance chart</canvas>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Defaulter list (most missed)</h2>
+      <div class="def-list" id="defList">
+        <div style="font-size:13px;color:#999">No defaulters yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FRONT END: ATTENDANCE GRID -->
+  <div id="frontend-section">
+    <div class="card grid-section">
+      <h2>Attendance grid — click a box to mark present</h2>
+      <div style="overflow-x:auto">
+        <table class="att" id="attTable"></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- BACK END: LOGS -->
+  <div id="backend-section" style="display:none">
+    <div class="card">
+      <h2>Check-in log</h2>
+      <div class="log-entries" id="logEntries">
+        <div style="font-size:13px;color:#999">No check-ins logged yet.</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Defaulter audit log</h2>
+      <div class="log-entries" id="defLog">
+        <div style="font-size:13px;color:#999">No defaulters flagged.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WEEKLY SUMMARY -->
+  <div id="weekly-section" style="display:none">
+    <div class="card">
+      <h2>Weekly attendance summary</h2>
+      <div class="week-grid" id="weekGrid"></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+/* ============================================================
+   CONFIGURATION — replace with your team names (up to 50)
+============================================================ */
+const NAMES = [
+  'Alice Johnson','Bob Smith','Carol White','David Lee','Emma Davis',
+  'Frank Brown','Grace Kim','Henry Chen','Iris Patel','James Wilson',
+  'Karen Moore','Liam Taylor','Mia Anderson','Noah Thomas','Olivia Jackson',
+  'Paul Harris','Quinn Martin','Rachel Garcia','Sam Martinez','Tina Robinson',
+  'Uma Clark','Victor Lewis','Wendy Walker','Xander Hall','Yara Allen',
+  'Zach Young','Amara Scott','Ben King','Chloe Wright','Dylan Hill'
+];
+
+/* ============================================================
+   DATE SETUP
+============================================================ */
+const DAYS_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const MONTHS = ['January','February','March','April','May','June',
+  'July','August','September','October','November','December'];
+
+const today = new Date();
+today.setHours(0,0,0,0);
+const yr = today.getFullYear();
+const mo = today.getMonth();
+const daysInMonth = new Date(yr, mo+1, 0).getDate();
+
+document.getElementById('cur-month').textContent = MONTHS[mo] + ' ' + yr;
+
+/* ============================================================
+   STATE
+============================================================ */
+let attendance  = {};  // { "Name|YYYY-MM-DD": true }
+let checkInLog  = [];  // [{ name, date, time }]
+
+// Restore from localStorage if available
+try {
+  const s = localStorage.getItem('att_data');
+  const l = localStorage.getItem('att_log');
+  if (s) attendance = JSON.parse(s);
+  if (l) checkInLog = JSON.parse(l);
+} catch(e) {}
+
+/* =========================================================
